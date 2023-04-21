@@ -3,7 +3,7 @@ import random
 
 import numpy as np
 
-from visualize import visualize_frank_wolfe
+from visualize import visualize_frank_wolfe, generate_simplex_gif
 
 
 class Simulator:
@@ -91,7 +91,7 @@ class DesignConfidenceBound(ConfidenceBound):
         self.z_t_prod += action.T @ action
 
     def eval(self):
-        omega = self.z_t_prod / sigma ** 2 + self.lambd
+        omega = self.z_t_prod / sigma ** 2 + self.lambd * np.identity(self.z_t_prod.shape[0])
         omega_inv = np.linalg.inv(omega)
         z_norms = np.apply_along_axis(lambda x: x @ omega_inv @ x.T, 1, self.action_space)
         return z_norms * (
@@ -132,7 +132,6 @@ def optimize_frank_wolfe(
         else:
             # Get upper confidence bound
             ucb = gradient + cb.eval()
-            print('ucb', ucb)
 
             # Interact with the environment
             action_id = np.argmax(ucb)
@@ -144,7 +143,8 @@ def optimize_frank_wolfe(
         action_vector = np.zeros_like(init_distribution)
         action_vector[action_id] = 1
         distribution += (action_vector - distribution) / (counter + 1)
-        gradient += (response * action_vector - gradient) / (counter + 1)
+        # Update only the gradient corresponding to the action taken
+        gradient[action_id] += (response - gradient[action_id]) / (counter + 1)
 
         if verbose:
             print(f"Step: {counter}, Action: {action_id}, Response: {response}, Gradient: {gradient}, "
@@ -157,13 +157,13 @@ def optimize_frank_wolfe(
 
 
 if __name__ == '__main__':
-    steps = 10
+    steps = 20
 
     # Bandits example
-    mus = [1, 3, 3, 1]
+    mus = [1, 5, 3]
     sigma = 1
     deltas = np.ones(steps)
-    action_space = np.array([0, 1, 2, 3])
+    action_space = np.array([0, 1, 2])
 
     bs = BanditsSimulator(
         action_space=action_space,
@@ -176,13 +176,14 @@ if __name__ == '__main__':
     )
     distributions = optimize_frank_wolfe(
         action_space=action_space,
-        init_distribution=np.ones(4) / 4,
+        init_distribution=np.ones(3) / 3,
         num_components=steps,
         simulator=bs,
         cb=cb,
         verbose=True
     )
-    visualize_frank_wolfe(distributions, action_space)
+    # visualize_frank_wolfe(distributions, action_space)
+    generate_simplex_gif(distributions, path='./gif/bandits.gif')
 
     # Simple design example
     theta_star = np.array([1, 1, 1, 1])
@@ -190,8 +191,6 @@ if __name__ == '__main__':
         [1, 2, 3, 4],
         [0, 2, 3, 1],
         [4, 6, 5, 3],
-        [9, 0, 4, 3],
-        [2, 0, 4, 3]
     ])
     sigma = 1
     delta = 1
@@ -209,11 +208,18 @@ if __name__ == '__main__':
     )
     distributions = optimize_frank_wolfe(
         action_space=action_space,
-        init_distribution=np.ones(5) / 5,
+        init_distribution=np.ones(3) / 3,
         num_components=steps,
         simulator=bs,
         cb=cb,
-        warm_up_steps=5,
+        warm_up_steps=0,
         verbose=True
     )
-    visualize_frank_wolfe(distributions, action_space)
+
+
+    def F(distribution):
+        function_values = action_space @ theta_star
+        return distribution @ function_values - function_values.max()
+
+
+    generate_simplex_gif(distributions, path='./gif/simple_design.gif', F=F)
