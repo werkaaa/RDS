@@ -118,8 +118,12 @@ def plot_ternary(distributions: List[np.array], F=None):
 
 
 def generate_simplex_gif(distributions: List[np.array], path: str = './gif/example.gif', F=None):
-    for t in range(len(distributions)):
-        plot_ternary(distributions[:t + 1], F[t])
+    if type(F) != list:
+        for t in range(len(distributions)):
+            plot_ternary(distributions[:t + 1])
+    else:
+        for t in range(len(distributions)):
+            plot_ternary(distributions[:t + 1], F[t])
 
     frames = []
     for t in range(len(distributions)):
