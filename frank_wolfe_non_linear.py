@@ -123,11 +123,11 @@ def optimize_frank_wolfe(
 if __name__ == '__main__':
     steps = 20
 
-    theta_star = np.array([1, 1])
+    theta_star = np.array([1])
     action_space = np.array([
-        [3, 0],
-        [1, 0],
-        [2, 0],
+        [2.1],
+        [1],
+        [2],
     ])
     sigma = 1
     delta = 1
