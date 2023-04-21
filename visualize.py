@@ -44,7 +44,7 @@ def draw_axis(ax, point1: np.array, point2: np.array, xytext: Tuple, ticks: int 
         ax.annotate(labels[i], xy=(x, y), xytext=xytext, textcoords='offset points')
 
 
-def plot_ternary(distributions: List[np.array]):
+def plot_ternary(distributions: List[np.array], F=None):
     vertices = np.array([
         [0, 0],
         [1, 0],
@@ -64,13 +64,33 @@ def plot_ternary(distributions: List[np.array]):
     ax.set_xlim(-0.1, 1.1)
     ax.set_ylim(-0.1, np.sqrt(3) / 2 + 0.1)
 
+    # Draw the contour plot
+    if F is not None:
+        delta = 0.005
+        X = np.arange(0.0, 1.0, delta)
+        Y = np.arange(0.0, np.sqrt(3) / 2, delta)
+        Z = []
+        for y in Y:
+            z_row = []
+            for x in X:
+                # Compute distribution value
+                c = 2 / np.sqrt(3) * y
+                b = x - y / np.sqrt(3)
+                a = 1 - b - c
+                if b < 0 or a < 0:
+                    z_row.append(None)
+                else:
+                    z_row.append(F(np.array([a, b, c])))
+            Z.append(z_row)
+        Z = np.array(Z, dtype=float)
+        # clev = np.arange(np.nanmin(Z), np.nanmax(Z), .1)
+        ax.contourf(X, Y, Z, 50)
+        # ax.clabel(CS, inline=True, fontsize=10)
+
     ax.plot(
         vertices[:, 0].tolist() + [vertices[0, 0]],
         vertices[:, 1].tolist() + [vertices[0, 1]],
         color='black')
-
-    ax.plot(x_scaled, y_scaled, color='grey')
-    ax.scatter(x_scaled[-1], y_scaled[-1], color='red')
 
     draw_axis(ax, vertices[0], vertices[1], (0, -20))
     draw_axis(ax, vertices[1], vertices[2], (10, 0))
@@ -85,6 +105,10 @@ def plot_ternary(distributions: List[np.array]):
             xytext=xytext[i],
             textcoords='offset points',
             ha='center')
+
+    ax.plot(x_scaled, y_scaled, color='grey')
+    ax.scatter(x_scaled[-1], y_scaled[-1], color='red')
+
     plt.axis('off')
     plt.savefig(f'./gif/img_{len(distributions)}.png',
                 transparent=False,
@@ -93,9 +117,9 @@ def plot_ternary(distributions: List[np.array]):
     plt.close()
 
 
-def generate_simplex_gif(distributions: List[np.array], path: str = './gif/example.gif'):
+def generate_simplex_gif(distributions: List[np.array], path: str = './gif/example.gif', F=None):
     for t in range(len(distributions)):
-        plot_ternary(distributions[:t + 1])
+        plot_ternary(distributions[:t + 1], F[t])
 
     frames = []
     for t in range(len(distributions)):
