@@ -6,28 +6,6 @@ from visualize import generate_simplex_gif
 from utils import SimpleDesignSimulator, Simulator, DesignConfidenceBound, ConfidenceBound
 
 
-class Gradient:
-    def __init__(self, action_space: np.array):
-        self.action_space = action_space
-        self.restricted_action_space = self.action_space
-
-    def restrict_action_space(self, restriction_mask: np.array):
-        self.restricted_action_space = self.action_space[restriction_mask]
-
-    def eval(self, distribution: np.array):
-        V_eta = self.action_space.T @ np.diag(distribution) @ self.action_space
-        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
-            return np.zeros_like(distribution)
-        V_eta_inv = np.linalg.inv(V_eta)
-        star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, self.restricted_action_space))
-        x_star = self.restricted_action_space[star_id]
-
-        def partial(x):
-            return - np.sum((x_star[:, None] @ x_star[None, :]) * (V_eta_inv @ x[:, None] @ x[None, :] @ V_eta_inv))
-
-        return np.apply_along_axis(partial, 1, action_space)
-
-
 class Estimator:
     """ Estimator of action_space @ theta_est values."""
 
@@ -42,12 +20,139 @@ class Estimator:
         self.actions_played.append(action)
         self.responses.append(response)
 
-    def eval(self):
+    def eval(self, vectors: np.array):
         X = self.action_space[self.actions_played]
         y = np.array(self.responses)[:, None]
         # Formula 5 from 'Experimental Design for Linear Functionals in RKHS.'
-        return self.action_space @ X.T @ np.linalg.inv(
-            self.lambd * self.sigma ** 2 * np.identity(X.shape[0]) + X @ X.T) @ y
+        return (vectors @ X.T @ np.linalg.inv(
+            self.lambd * self.sigma ** 2 * np.identity(X.shape[0]) + X @ X.T) @ y).flatten()
+
+
+class Gradient:
+    def __init__(self, action_space: np.array, theta_est: Estimator, cb: ConfidenceBound, lambd: float):
+        self.action_space = action_space
+        self.restricted_best_action_space = self.action_space
+        self.theta_est = theta_est
+        self.cb = cb
+        self.lambd = lambd
+
+    def restrict_best_action_space(self):
+        bound = self.cb.eval(self.action_space)
+        if np.any(bound):
+            preds = self.theta_est.eval(self.action_space)
+            preds_ucb = preds + bound
+            best_pred = np.argmax(preds_ucb)
+            lb = preds[best_pred] - bound
+            restriction_mask = preds_ucb >= lb
+            self.restricted_best_action_space = self.action_space[restriction_mask]
+            return bound, preds
+        return bound, None
+
+    def eval(self, distribution: np.array):
+        return np.zeros(self.action_space.shape[1])
+
+
+class GradientSimple(Gradient):
+
+    def eval(self, distribution: np.array):
+        V_eta = self.action_space.T @ np.diag(
+            distribution) @ self.action_space  # TODO: Add lambda times identity everywhere where we have V_eta, set lambda to 1/number of iterations we want to make
+        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
+            return np.zeros_like(distribution)
+        V_eta_inv = np.linalg.inv(V_eta + self.lambd * np.identity(V_eta.shape[0]))
+        star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, self.restricted_best_action_space))
+        x_star = self.restricted_best_action_space[star_id]
+
+        def partial(x):
+            return - np.sum((x_star[:, None] @ x_star[None, :]) * (V_eta_inv @ x[:, None] @ x[None, :] @ V_eta_inv))
+
+        return np.apply_along_axis(partial, 1, action_space)
+
+
+class GradientOnlyNominator(Gradient):
+
+    def eval(self, distribution: np.array):
+        V_eta = self.action_space.T @ np.diag(
+            distribution) @ self.action_space  # TODO: Add lambda times identity everywhere where we have V_eta, set lambda to 1/number of iterations we want to make
+        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
+            return np.zeros_like(distribution)
+        V_eta_inv = np.linalg.inv(V_eta + self.lambd * np.identity(V_eta.shape[0]))
+
+        n1, m = self.restricted_best_action_space.shape
+        n2 = self.action_space.shape[0]
+
+        # Reshape the arrays to have compatible shapes for broadcasting
+        # and compute differences between all possible row pairs. Choosing
+        # a max over this set upperbounds max_z ||z - z^*||_V_eta_inv
+        arr1_reshaped = self.restricted_best_action_space.reshape(n1, 1, m)
+        arr2_reshaped = self.action_space.reshape(1, n2, m)
+        diffs = arr1_reshaped - arr2_reshaped
+        diffs = diffs.reshape((-1, diffs.shape[-1]))
+
+        star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs))
+        diff_star = diffs[star_id]
+
+        def partial(x):
+            return - np.sum(
+                (diff_star[:, None] @ diff_star[None, :]) * (V_eta_inv @ x[:, None] @ x[None, :] @ V_eta_inv))
+
+        return np.apply_along_axis(partial, 1, action_space)
+
+
+class GradientFull(Gradient):
+
+    def __init__(self, action_space: np.array, theta_est: Estimator, cb: ConfidenceBound, variant: int = 0, eps=0.01):
+        super(GradientFull, self).__init__(action_space, theta_est, cb)
+        self.variant = variant
+        self.eps = eps
+
+    def eval(self, distribution: np.array):
+
+        V_eta = self.action_space.T @ np.diag(distribution) @ self.action_space
+        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
+            return np.zeros_like(distribution)
+        V_eta_inv = np.linalg.inv(V_eta + self.lambd * np.identity(V_eta.shape[0]))
+
+        n1, m = self.restricted_best_action_space.shape
+        n2 = self.action_space.shape[0]
+
+        # Reshape the arrays to have compatible shapes for broadcasting
+        # and compute differences between all possible row pairs. Choosing
+        # a max over this set upperbounds max_z ||z - z^*||_V_eta_inv.
+        arr1_reshaped = self.restricted_best_action_space.reshape(n1, 1, m)
+        arr2_reshaped = self.action_space.reshape(1, n2, m)
+        diffs = arr1_reshaped - arr2_reshaped
+        diffs = diffs.reshape((-1, diffs.shape[-1]))
+
+        # Compute the lower bounds on the possible denominators.
+        est = self.theta_est.eval(diffs)
+        denominators = np.ones_like(est) * self.eps
+        cbs = self.cb.eval(diffs)
+        lcbs = (est - cbs).flatten()
+        ucbs = est + cbs
+        denominators[ucbs < 0] = ucbs[ucbs < 0] ** 2
+        denominators[lcbs > 0] = lcbs[lcbs > 0] ** 2
+
+        if self.variant == 0:
+            star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs))
+            diff_star = diffs[star_id]
+
+            d = np.min(denominators)
+        elif self.variant == 1:
+            nominators = np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs)
+            star_id = np.argmax(nominators / denominators)
+            diff_star = diffs[star_id]
+
+            d = denominators[star_id]
+        else:
+            raise NotImplemented
+
+        def partial(x):
+            return - np.sum(
+                (diff_star[:, None] @ diff_star[None, :]) * (V_eta_inv @ x[:, None] @ x[None, :] @ V_eta_inv))
+
+        gradient = np.apply_along_axis(partial, 1, action_space)
+        return gradient / d
 
 
 def optimize_frank_wolfe(
@@ -56,7 +161,7 @@ def optimize_frank_wolfe(
         simulator: Simulator,
         cb: ConfidenceBound,
         ge: Gradient,
-        est: Estimator,
+        theta_est: Estimator,
         verbose: bool = False,
 ) -> np.array:
     """Performs Frank-Wolfe algorithm to maximize the objective function.
@@ -66,7 +171,7 @@ def optimize_frank_wolfe(
         num_components (int): limit on number of components to be obtained by the algorithm.
         simulator (Simulator): simulates gradient associated with playing a single action.
         cb (ConfidenceBound): confidence bound specific to the problem.
-        est: (Estimator): estimator of the action_spce @ theta_est
+        theta_est: (Estimator): estimator of the action_spce @ theta_est
         verbose (bool, optional): if True, logs optimization progress to terminal. Defaults to False.
 
     """
@@ -75,19 +180,19 @@ def optimize_frank_wolfe(
 
     # For visualization purpose
     distributions = [distribution.copy()]
-    restricted_action_space = [ge.restricted_action_space.copy()]
+    restricted_best_action_space = [ge.restricted_best_action_space.copy()]
 
     gradient = np.zeros_like(init_distribution)
 
     while counter < num_components:
 
         # Select action to play with random tie breaking
-        action_id = np.random.choice(np.flatnonzero(gradient == gradient.max()))
+        action_id = np.random.choice(np.flatnonzero(gradient == gradient.min()))
 
         # Interact with the environment
         response = simulator.eval(action_id)
         cb.update_state(action_id)
-        est.update(action_id, response)
+        theta_est.update(action_id, response)
 
         # Update
         action_vector = np.zeros_like(init_distribution)
@@ -95,15 +200,9 @@ def optimize_frank_wolfe(
         distribution += (action_vector - distribution) / (counter + 1)
 
         # Restrict action space based on UCB
-        bound = cb.eval()
-        if np.any(bound):
-            preds = est.eval().flatten()
-            preds_ucb = preds + bound
-            best_pred = np.argmax(preds_ucb)
-            lb = preds[best_pred] - bound
-            ge.restrict_action_space(preds_ucb >= lb)
+        bound, preds = ge.restrict_best_action_space()
 
-        restricted_action_space.append(ge.restricted_action_space.copy())
+        restricted_best_action_space.append(ge.restricted_best_action_space.copy())
 
         # Compute gradient for the next step
         gradient = ge.eval(distribution)
@@ -111,27 +210,29 @@ def optimize_frank_wolfe(
         if verbose:
             print(f"Step: {counter}, Action: {action_id}, Response: {response}, Gradient: {gradient}, "
                   f"Confidence Bound: {bound}, Distribution: {distribution},")
-            if np.any(bound):
+            if preds is not None:
                 print(f"Predictions: {preds}")
 
         distributions.append(distribution.copy())
         counter += 1
 
-    return distributions, restricted_action_space
+    return distributions, restricted_best_action_space
 
 
 if __name__ == '__main__':
     steps = 20
 
-    theta_star = np.array([1])
+    theta_star = np.array([2, 1])
     action_space = np.array([
-        [2.1],
-        [1],
-        [2],
+        [1, 0],
+        [0, 1],
+        [0.1, 0.1],
     ])
+    # action_space /= 100.
     sigma = 1
     delta = 1
-    lambd = 1
+    # Setting lambda to 1/number of iterations we want to make.
+    lambd = 1 / steps
 
     bs = SimpleDesignSimulator(
         action_space=action_space,
@@ -140,19 +241,35 @@ if __name__ == '__main__':
     # cb = ConfidenceBound(
     #     action_space=action_space,
     # )
+    est = Estimator(
+        action_space=action_space,
+        sigma=sigma,
+        lambd=lambd
+    )
     cb = DesignConfidenceBound(
         action_space=action_space,
         delta=delta,
         lambd=lambd,
         sigma=sigma
     )
-    ge = Gradient(
-        action_space=action_space
-    )
-    est = Estimator(
+    # ge = GradientSimple(
+    #     action_space=action_space,
+    #     theta_est=est,
+    #     cb=cb,
+    #     lambd=lambd
+    # )
+    # ge = GradientOnlyNominator(
+    #     action_space=action_space,
+    #     theta_est=est,
+    #     cb=cb,
+    #     lambd=lambd
+    # )
+    ge = GradientFull(
         action_space=action_space,
-        sigma=sigma,
-        lambd=lambd
+        theta_est=est,
+        cb=cb,
+        lambd=lambd,
+        variant=1
     )
     distributions, restricted_action_spaces = optimize_frank_wolfe(
         init_distribution=np.ones(3) / 3,
@@ -160,20 +277,52 @@ if __name__ == '__main__':
         simulator=bs,
         cb=cb,
         ge=ge,
-        est=est,
+        theta_est=est,
         verbose=True
     )
 
 
-    def F(distribution, restricted_action_space):
+    def F_simple(distribution, restricted_action_space, lambd):
         V_eta = action_space.T @ np.diag(distribution) @ action_space
         if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
             return None
-        V_eta_inv = np.linalg.inv(V_eta)
+        V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
+
         return np.max(np.apply_along_axis(lambda x: x @ V_eta_inv @ x[:, None], 1, restricted_action_space))
 
 
+    def F_only_nominator(distribution, action_space, theta_star, lamd):
+        x_star = action_space[np.argmax(action_space @ theta_star)]
+        V_eta = action_space.T @ np.diag(distribution) @ action_space
+        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
+            return None
+        V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
+        return np.max(np.apply_along_axis(lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None], 1, action_space))
+
+
+    def F_full(distribution, action_space, theta_star, lambd):
+        x_star = action_space[np.argmax(action_space @ theta_star)]
+        remaining_action_space = action_space[np.all(action_space != x_star, axis=1)]
+        V_eta = action_space.T @ np.diag(distribution) @ action_space
+        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
+            return None
+        V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
+
+        return np.max(np.ma.masked_invalid(np.apply_along_axis(
+            lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None] / ((x - x_star) @ theta_star) ** 2,
+            1,
+            remaining_action_space)))
+
+
+    # generate_simplex_gif(
+    #     distributions,
+    #     path='./gif/non_linear_design.gif',
+    #     F=lambda d: F_simple(d, action_space, lambd))
+    # generate_simplex_gif(
+    #     distributions,
+    #     path='./gif/non_linear_design.gif',
+    #     F=lambda d: F_only_nominator(d, action_space, theta_star, lambd))
     generate_simplex_gif(
         distributions,
         path='./gif/non_linear_design.gif',
-        F=[lambda d: F(d, r) for r in restricted_action_spaces])
+        F=lambda d: F_full(d, action_space, theta_star, lambd))

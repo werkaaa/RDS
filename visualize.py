@@ -84,7 +84,7 @@ def plot_ternary(distributions: List[np.array], F=None):
             Z.append(z_row)
         Z = np.array(Z, dtype=float)
         # clev = np.arange(np.nanmin(Z), np.nanmax(Z), .1)
-        ax.contourf(X, Y, Z, 50)
+        CS = ax.contourf(X, Y, np.minimum(Z, 50), 50)
         # ax.clabel(CS, inline=True, fontsize=10)
 
     ax.plot(
@@ -118,12 +118,14 @@ def plot_ternary(distributions: List[np.array], F=None):
 
 
 def generate_simplex_gif(distributions: List[np.array], path: str = './gif/example.gif', F=None):
-    if type(F) != list:
-        for t in range(len(distributions)):
-            plot_ternary(distributions[:t + 1])
-    else:
-        for t in range(len(distributions)):
-            plot_ternary(distributions[:t + 1], F[t])
+    # if type(F) != list:
+    #     for t in range(len(distributions)):
+    #         plot_ternary(distributions[:t + 1])
+    # else:
+    #     for t in range(len(distributions)):
+    #         plot_ternary(distributions[:t + 1], F[t])
+    for t in range(len(distributions)):
+        plot_ternary(distributions[:t + 1], F)
 
     frames = []
     for t in range(len(distributions)):
@@ -132,4 +134,4 @@ def generate_simplex_gif(distributions: List[np.array], path: str = './gif/examp
 
     imageio.mimsave(path,
                     frames,
-                    fps=5)
+                    duration=2)

@@ -52,9 +52,9 @@ class DesignConfidenceBound(ConfidenceBound):
         action = np.expand_dims(self.action_space[action_id], axis=0)
         self.z_t_prod += action.T @ action
 
-    def eval(self):
-        omega = self.z_t_prod / self.sigma ** 2 + self.lambd * np.identity(self.z_t_prod.shape[0])
-        omega_inv = np.linalg.inv(omega)
-        z_norms = np.apply_along_axis(lambda x: x @ omega_inv @ x.T, 1, self.action_space)
+    def eval(self, vectors: np.array):
+        omega = self.z_t_prod / self.sigma ** 2
+        omega_inv = np.linalg.inv(omega + self.lambd * np.identity(self.z_t_prod.shape[0]))
+        z_norms = np.apply_along_axis(lambda x: x @ omega_inv @ x.T, 1, vectors)
         return z_norms * (
                 np.sqrt(2 * np.log(np.sqrt(np.linalg.det(omega))) / (self.delta * self.lambd ** (self.d / 2))) + 1)
