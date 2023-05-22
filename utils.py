@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 
 
@@ -31,8 +33,10 @@ class ConfidenceBound:
     def update_state(self, action_id: int):
         self.action_counter[action_id] += 1
 
-    def eval(self, vectors: np.array):
+    def eval(self, vectors: Optional[np.array] = None):
         return 0
+
+
 
 
 class DesignConfidenceBound(ConfidenceBound):

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 import random
 
 import numpy as np
@@ -26,7 +26,7 @@ class BanditsConfidenceBound(ConfidenceBound):
         self.deltas = deltas
         self.sigma = sigma
 
-    def eval(self):
+    def eval(self, vectors: Optional[np.array] = None):
         t = int(np.sum(self.action_counter))  # Algorithm starts for t = 0
         nominator = 2 * sigma ** 2 * np.log((t + 1) / self.deltas[t])
         return np.sqrt(np.divide(
@@ -70,7 +70,7 @@ def optimize_frank_wolfe(
             action_id = random.randint(0, action_space.shape[0] - 1)
         else:
             # Get upper confidence bound
-            ucb = gradient + cb.eval()
+            ucb = gradient + cb.eval(action_space)
 
             # Interact with the environment
             action_id = np.argmax(ucb)
@@ -125,11 +125,11 @@ if __name__ == '__main__':
     generate_simplex_gif(distributions, path='./gif/bandits.gif')
 
     # Simple design example
-    theta_star = np.array([1, 1, 1, 1])
+    theta_star = np.array([1, 1])
     action_space = np.array([
-        [1, 2, 3, 4],
-        [0, 2, 3, 1],
-        [4, 6, 5, 3],
+        [1, 0],
+        [0, 1],
+        [np.sqrt(0.5), np.sqrt(0.5)],
     ])
     sigma = 1
     delta = 1
