@@ -56,9 +56,7 @@ class GradientSimple(Gradient):
 
     def eval(self, distribution: np.array):
         V_eta = self.action_space.T @ np.diag(
-            distribution) @ self.action_space  # TODO: Add lambda times identity everywhere where we have V_eta, set lambda to 1/number of iterations we want to make
-        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
-            return np.zeros_like(distribution)
+            distribution) @ self.action_space
         V_eta_inv = np.linalg.inv(V_eta + self.lambd * np.identity(V_eta.shape[0]))
         star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, self.restricted_best_action_space))
         x_star = self.restricted_best_action_space[star_id]
@@ -73,22 +71,18 @@ class GradientOnlyNominator(Gradient):
 
     def eval(self, distribution: np.array):
         V_eta = self.action_space.T @ np.diag(
-            distribution) @ self.action_space  # TODO: Add lambda times identity everywhere where we have V_eta, set lambda to 1/number of iterations we want to make
-        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
-            return np.zeros_like(distribution)
+            distribution) @ self.action_space
         V_eta_inv = np.linalg.inv(V_eta + self.lambd * np.identity(V_eta.shape[0]))
 
-        n1, m = self.restricted_best_action_space.shape
-        n2 = self.action_space.shape[0]
+        n, m = self.restricted_best_action_space.shape
 
         # Reshape the arrays to have compatible shapes for broadcasting
         # and compute differences between all possible row pairs. Choosing
         # a max over this set upperbounds max_z ||z - z^*||_V_eta_inv
-        arr1_reshaped = self.restricted_best_action_space.reshape(n1, 1, m)
-        arr2_reshaped = self.action_space.reshape(1, n2, m)
+        arr1_reshaped = self.restricted_best_action_space.reshape(n, 1, m)
+        arr2_reshaped = self.restricted_best_action_space.reshape(1, n, m)
         diffs = arr1_reshaped - arr2_reshaped
         diffs = diffs.reshape((-1, diffs.shape[-1]))
-
         star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs))
         diff_star = diffs[star_id]
 
@@ -102,27 +96,26 @@ class GradientOnlyNominator(Gradient):
 class GradientFull(Gradient):
 
     def __init__(self, action_space: np.array, theta_est: Estimator, cb: ConfidenceBound, variant: int = 0, eps=0.01):
-        super(GradientFull, self).__init__(action_space, theta_est, cb)
+        super(GradientFull, self).__init__(action_space, theta_est, cb, lambd)
         self.variant = variant
         self.eps = eps
 
     def eval(self, distribution: np.array):
 
         V_eta = self.action_space.T @ np.diag(distribution) @ self.action_space
-        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
-            return np.zeros_like(distribution)
         V_eta_inv = np.linalg.inv(V_eta + self.lambd * np.identity(V_eta.shape[0]))
 
-        n1, m = self.restricted_best_action_space.shape
-        n2 = self.action_space.shape[0]
+        n, m = self.restricted_best_action_space.shape
 
         # Reshape the arrays to have compatible shapes for broadcasting
         # and compute differences between all possible row pairs. Choosing
-        # a max over this set upperbounds max_z ||z - z^*||_V_eta_inv.
-        arr1_reshaped = self.restricted_best_action_space.reshape(n1, 1, m)
-        arr2_reshaped = self.action_space.reshape(1, n2, m)
+        # a max over this set upperbounds max_z ||z - z^*||_V_eta_inv
+        arr1_reshaped = self.restricted_best_action_space.reshape(n, 1, m)
+        arr2_reshaped = self.restricted_best_action_space.reshape(1, n, m)
         diffs = arr1_reshaped - arr2_reshaped
         diffs = diffs.reshape((-1, diffs.shape[-1]))
+        star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs))
+        diff_star = diffs[star_id]
 
         # Compute the lower bounds on the possible denominators.
         est = self.theta_est.eval(diffs)
@@ -222,11 +215,11 @@ def optimize_frank_wolfe(
 if __name__ == '__main__':
     steps = 20
 
-    theta_star = np.array([2, 1])
+    theta_star = np.array([1, 1, 1])
     action_space = np.array([
-        [1, 0],
-        [0, 1],
-        [0.1, 0.1],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1 / 2],
     ])
     # action_space /= 100.
     sigma = 1
@@ -268,7 +261,6 @@ if __name__ == '__main__':
         action_space=action_space,
         theta_est=est,
         cb=cb,
-        lambd=lambd,
         variant=1
     )
     distributions, restricted_action_spaces = optimize_frank_wolfe(
@@ -284,8 +276,6 @@ if __name__ == '__main__':
 
     def F_simple(distribution, restricted_action_space, lambd):
         V_eta = action_space.T @ np.diag(distribution) @ action_space
-        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
-            return None
         V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
 
         return np.max(np.apply_along_axis(lambda x: x @ V_eta_inv @ x[:, None], 1, restricted_action_space))
@@ -294,24 +284,21 @@ if __name__ == '__main__':
     def F_only_nominator(distribution, action_space, theta_star, lamd):
         x_star = action_space[np.argmax(action_space @ theta_star)]
         V_eta = action_space.T @ np.diag(distribution) @ action_space
-        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
-            return None
         V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
         return np.max(np.apply_along_axis(lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None], 1, action_space))
 
 
     def F_full(distribution, action_space, theta_star, lambd):
+        eps = 1e-08
         x_star = action_space[np.argmax(action_space @ theta_star)]
-        remaining_action_space = action_space[np.all(action_space != x_star, axis=1)]
+        remaining_action_space = action_space[np.any(action_space != x_star, axis=1)]
         V_eta = action_space.T @ np.diag(distribution) @ action_space
-        if np.linalg.matrix_rank(V_eta) != V_eta.shape[0]:
-            return None
         V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
 
-        return np.max(np.ma.masked_invalid(np.apply_along_axis(
-            lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None] / ((x - x_star) @ theta_star) ** 2,
+        return np.max(np.apply_along_axis(
+            lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None] / ((x - x_star + eps) @ theta_star) ** 2,
             1,
-            remaining_action_space)))
+            remaining_action_space))
 
 
     # generate_simplex_gif(

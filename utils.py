@@ -31,7 +31,7 @@ class ConfidenceBound:
     def update_state(self, action_id: int):
         self.action_counter[action_id] += 1
 
-    def eval(self):
+    def eval(self, vectors: np.array):
         return 0
 
 
@@ -53,8 +53,12 @@ class DesignConfidenceBound(ConfidenceBound):
         self.z_t_prod += action.T @ action
 
     def eval(self, vectors: np.array):
-        omega = self.z_t_prod / self.sigma ** 2
-        omega_inv = np.linalg.inv(omega + self.lambd * np.identity(self.z_t_prod.shape[0]))
+        omega = self.z_t_prod / self.sigma ** 2 + self.lambd * np.identity(self.z_t_prod.shape[0])
+        omega_inv = np.linalg.inv(omega)
+        log = 2 * np.log(np.sqrt(np.linalg.det(omega))) / (self.delta * self.lambd ** (self.d / 2))
+        # TODO: There is an issue here with negative values coming out of the logarithm
+        if log < 0:
+            return np.zeros(vectors.shape[0])
         z_norms = np.apply_along_axis(lambda x: x @ omega_inv @ x.T, 1, vectors)
-        return z_norms * (
-                np.sqrt(2 * np.log(np.sqrt(np.linalg.det(omega))) / (self.delta * self.lambd ** (self.d / 2))) + 1)
+        bounds = z_norms * (np.sqrt(log) + 1)
+        return bounds
