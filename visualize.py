@@ -44,7 +44,79 @@ def draw_axis(ax, point1: np.array, point2: np.array, xytext: Tuple, ticks: int 
         ax.annotate(labels[i], xy=(x, y), xytext=xytext, textcoords='offset points')
 
 
-def plot_ternary(distributions: List[np.array], F=None):
+# def plot_ternary(distributions: List[np.array], F=None):
+#     vertices = np.array([
+#         [0, 0],
+#         [1, 0],
+#         [0.5, np.sqrt(3) / 2]
+#     ])
+#
+#     x_scaled = []
+#     y_scaled = []
+#     for distribution in distributions:
+#         a, b, c = distribution
+#         x_scaled.append(b + c / 2)
+#         y_scaled.append(np.sqrt(3) / 2 * c)
+#
+#     fig, ax = plt.subplots()
+#
+#     ax.set_aspect('equal')
+#     ax.set_xlim(-0.1, 1.1)
+#     ax.set_ylim(-0.1, np.sqrt(3) / 2 + 0.1)
+#
+#     # Draw the contour plot
+#     if F is not None:
+#         delta = 0.005
+#         X = np.arange(0.0, 1.0, delta)
+#         Y = np.arange(0.0, np.sqrt(3) / 2, delta)
+#         Z = []
+#         for y in Y:
+#             z_row = []
+#             for x in X:
+#                 # Compute distribution value
+#                 c = 2 / np.sqrt(3) * y
+#                 b = x - y / np.sqrt(3)
+#                 a = 1 - b - c
+#                 if b < 0 or a < 0:
+#                     z_row.append(None)
+#                 else:
+#                     z_row.append(F(np.array([a, b, c])))
+#             Z.append(z_row)
+#         Z = np.array(Z, dtype=float)
+#         # clev = np.arange(np.nanmin(Z), np.nanmax(Z), .1)
+#         CS = ax.contourf(X, Y, np.minimum(Z, 50), 50)
+#         # ax.clabel(CS, inline=True, fontsize=10)
+#
+#     ax.plot(
+#         vertices[:, 0].tolist() + [vertices[0, 0]],
+#         vertices[:, 1].tolist() + [vertices[0, 1]],
+#         color='black')
+#
+#     draw_axis(ax, vertices[0], vertices[1], (0, -20))
+#     draw_axis(ax, vertices[1], vertices[2], (10, 0))
+#     draw_axis(ax, vertices[2], vertices[0], (-20, 0))
+#
+#     labels = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+#     xytext = [(-30, -30), (30, -30), (0, 30)]
+#     for i, label in enumerate(labels):
+#         ax.annotate(
+#             text=f'{label}',
+#             xy=tuple(vertices[i]),
+#             xytext=xytext[i],
+#             textcoords='offset points',
+#             ha='center')
+#
+#     ax.plot(x_scaled, y_scaled, color='grey')
+#     ax.scatter(x_scaled[-1], y_scaled[-1], color='red')
+#
+#     plt.axis('off')
+#     plt.savefig(f'./gif/img_{len(distributions)}.png',
+#                 transparent=False,
+#                 facecolor='white'
+#                 )
+#     plt.close()
+
+def plot_ternary(distributions: List[np.array], Fs: List[callable] = None):
     vertices = np.array([
         [0, 0],
         [1, 0],
@@ -58,74 +130,70 @@ def plot_ternary(distributions: List[np.array], F=None):
         x_scaled.append(b + c / 2)
         y_scaled.append(np.sqrt(3) / 2 * c)
 
-    fig, ax = plt.subplots()
+    fig, axs = plt.subplots(1, len(Fs), figsize=(6 * len(Fs), 5))
 
-    ax.set_aspect('equal')
-    ax.set_xlim(-0.1, 1.1)
-    ax.set_ylim(-0.1, np.sqrt(3) / 2 + 0.1)
+    for i, ax in enumerate(axs):
+        ax.set_aspect('equal')
+        ax.set_xlim(-0.1, 1.1)
+        ax.set_ylim(-0.1, np.sqrt(3) / 2 + 0.1)
 
-    # Draw the contour plot
-    if F is not None:
-        delta = 0.005
-        X = np.arange(0.0, 1.0, delta)
-        Y = np.arange(0.0, np.sqrt(3) / 2, delta)
-        Z = []
-        for y in Y:
-            z_row = []
-            for x in X:
-                # Compute distribution value
-                c = 2 / np.sqrt(3) * y
-                b = x - y / np.sqrt(3)
-                a = 1 - b - c
-                if b < 0 or a < 0:
-                    z_row.append(None)
-                else:
-                    z_row.append(F(np.array([a, b, c])))
-            Z.append(z_row)
-        Z = np.array(Z, dtype=float)
-        # clev = np.arange(np.nanmin(Z), np.nanmax(Z), .1)
-        CS = ax.contourf(X, Y, np.minimum(Z, 50), 50)
-        # ax.clabel(CS, inline=True, fontsize=10)
 
-    ax.plot(
-        vertices[:, 0].tolist() + [vertices[0, 0]],
-        vertices[:, 1].tolist() + [vertices[0, 1]],
-        color='black')
+        F = Fs[i]
+        if F is not None:
+            delta = 0.005
+            X = np.arange(0.0, 1.0, delta)
+            Y = np.arange(0.0, np.sqrt(3) / 2, delta)
+            Z = []
+            for y in Y:
+                z_row = []
+                for x in X:
+                    c = 2 / np.sqrt(3) * y
+                    b = x - y / np.sqrt(3)
+                    a = 1 - b - c
+                    if b < 0 or a < 0:
+                        z_row.append(None)
+                    else:
+                        z_row.append(F(np.array([a, b, c])))
+                Z.append(z_row)
+            Z = np.array(Z, dtype=float)
 
-    draw_axis(ax, vertices[0], vertices[1], (0, -20))
-    draw_axis(ax, vertices[1], vertices[2], (10, 0))
-    draw_axis(ax, vertices[2], vertices[0], (-20, 0))
+            CS = ax.contourf(X, Y, np.minimum(Z, 50), 50)
 
-    labels = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-    xytext = [(-30, -30), (30, -30), (0, 30)]
-    for i, label in enumerate(labels):
-        ax.annotate(
-            text=f'{label}',
-            xy=tuple(vertices[i]),
-            xytext=xytext[i],
-            textcoords='offset points',
-            ha='center')
+        ax.plot(
+            vertices[:, 0].tolist() + [vertices[0, 0]],
+            vertices[:, 1].tolist() + [vertices[0, 1]],
+            color='black')
 
-    ax.plot(x_scaled, y_scaled, color='grey')
-    ax.scatter(x_scaled[-1], y_scaled[-1], color='red')
+        draw_axis(ax, vertices[0], vertices[1], (0, -20))
+        draw_axis(ax, vertices[1], vertices[2], (10, 0))
+        draw_axis(ax, vertices[2], vertices[0], (-20, 0))
 
-    plt.axis('off')
+        labels = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        xytext = [(-30, -30), (30, -30), (0, 30)]
+        for j, label in enumerate(labels):
+            ax.annotate(
+                text=f'{label}',
+                xy=tuple(vertices[j]),
+                xytext=xytext[j],
+                textcoords='offset points',
+                ha='center')
+
+        ax.plot(x_scaled, y_scaled, color='grey')
+        ax.scatter(x_scaled[-1], y_scaled[-1], color='red')
+
+        ax.axis('off')
+
     plt.savefig(f'./gif/img_{len(distributions)}.png',
                 transparent=False,
-                facecolor='white'
-                )
+                facecolor='white')
     plt.close()
 
 
-def generate_simplex_gif(distributions: List[np.array], path: str = './gif/example.gif', F=None):
-    # if type(F) != list:
-    #     for t in range(len(distributions)):
-    #         plot_ternary(distributions[:t + 1])
-    # else:
-    #     for t in range(len(distributions)):
-    #         plot_ternary(distributions[:t + 1], F[t])
+def generate_simplex_gif(distributions: List[np.array], path: str = './gif/example.gif', F1=None, F2=None):
+    if type(F2) == list:
+        F1 = [F1] * len(F2)
     for t in range(len(distributions)):
-        plot_ternary(distributions[:t + 1], F)
+        plot_ternary(distributions[:t + 1], [F1[t], F2[t]])
 
     frames = []
     for t in range(len(distributions)):
@@ -134,4 +202,5 @@ def generate_simplex_gif(distributions: List[np.array], path: str = './gif/examp
 
     imageio.mimsave(path,
                     frames,
-                    duration=2)
+                    duration=300, #Values between 100 and 500 make sense
+                    loop=0)

@@ -59,10 +59,12 @@ class DesignConfidenceBound(ConfidenceBound):
     def eval(self, vectors: np.array):
         omega = self.z_t_prod / self.sigma ** 2 + self.lambd * np.identity(self.z_t_prod.shape[0])
         omega_inv = np.linalg.inv(omega)
-        log = 2 * np.log(np.sqrt(np.linalg.det(omega))) / (self.delta * self.lambd ** (self.d / 2))
-        # TODO: There is an issue here with negative values coming out of the logarithm
+        log = 2 * np.log(np.sqrt(np.linalg.det(omega)) / (self.delta * self.lambd ** (self.d / 2)))
         if log < 0:
             return np.zeros(vectors.shape[0])
         z_norms = np.apply_along_axis(lambda x: x @ omega_inv @ x.T, 1, vectors)
         bounds = z_norms * (np.sqrt(log) + 1)
         return bounds
+
+#TODO: Confidence sets at the beginning should be around infinity
+#TODO: There is possibly still a bug with convergence

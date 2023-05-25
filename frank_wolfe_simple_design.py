@@ -1,3 +1,4 @@
+import copy
 from typing import List, Optional
 import random
 
@@ -61,16 +62,20 @@ def optimize_frank_wolfe(
     counter = 0
     distribution = init_distribution
     distributions = [distribution.copy()]
+    ucbs = [None]
     gradient = np.zeros_like(init_distribution)
 
     while counter < num_components + warm_up_steps:
 
         if counter < warm_up_steps:
+            print("warmup")
             ucb = -1  # For verbose to work
+            ucbs.append(None)
             action_id = random.randint(0, action_space.shape[0] - 1)
         else:
             # Get upper confidence bound
             ucb = gradient + cb.eval(action_space)
+            ucbs.append(ucb)
 
             # Interact with the environment
             action_id = np.argmax(ucb)
@@ -92,11 +97,11 @@ def optimize_frank_wolfe(
         distributions.append(distribution.copy())
         counter += 1
 
-    return distributions
+    return distributions, ucbs
 
 
 if __name__ == '__main__':
-    steps = 20
+    steps = 50
 
     # Bandits example
     mus = [1, 5, 3]
@@ -113,7 +118,7 @@ if __name__ == '__main__':
         deltas=deltas,
         sigma=sigma
     )
-    distributions = optimize_frank_wolfe(
+    distributions, _ = optimize_frank_wolfe(
         action_space=action_space,
         init_distribution=np.ones(3) / 3,
         num_components=steps,
@@ -122,7 +127,7 @@ if __name__ == '__main__':
         verbose=True
     )
     # visualize_frank_wolfe(distributions, action_space)
-    generate_simplex_gif(distributions, path='./gif/bandits.gif')
+    #generate_simplex_gif(distributions, path='./gif/bandits.gif')
 
     # Simple design example
     theta_star = np.array([1, 1])
@@ -133,7 +138,7 @@ if __name__ == '__main__':
     ])
     sigma = 1
     delta = 1
-    lambd = 1
+    lambd = 1/50
 
     bs = SimpleDesignSimulator(
         action_space=action_space,
@@ -145,7 +150,7 @@ if __name__ == '__main__':
         lambd=lambd,
         sigma=sigma
     )
-    distributions = optimize_frank_wolfe(
+    distributions, ucbs = optimize_frank_wolfe(
         action_space=action_space,
         init_distribution=np.ones(3) / 3,
         num_components=steps,
@@ -160,5 +165,10 @@ if __name__ == '__main__':
         function_values = action_space @ theta_star
         return distribution @ function_values - function_values.max()
 
+    def F_ucb(distribution, ucb):
+        if ucb is None:
+            return 0
+        return distribution @ ucb - ucb.max()
 
-    generate_simplex_gif(distributions, path='./gif/simple_design.gif', F=F)
+
+    generate_simplex_gif(distributions, path='./gif/simple_design.gif', F1=F, F2=[lambda d, ucb=ucb: F_ucb(d, ucb) for ucb in ucbs])
