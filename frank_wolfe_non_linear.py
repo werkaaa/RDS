@@ -3,29 +3,7 @@ from typing import List
 import numpy as np
 
 from visualize import generate_simplex_gif
-from utils import SimpleDesignSimulator, Simulator, DesignConfidenceBound, ConfidenceBound
-
-
-class Estimator:
-    """ Estimator of action_space @ theta_est values."""
-
-    def __init__(self, action_space: np.array, sigma: float, lambd: float):
-        self.action_space = action_space
-        self.sigma = sigma
-        self.lambd = lambd
-        self.actions_played = []
-        self.responses = []
-
-    def update(self, action: np.array, response: float):
-        self.actions_played.append(action)
-        self.responses.append(response)
-
-    def eval(self, vectors: np.array):
-        X = self.action_space[self.actions_played]
-        y = np.array(self.responses)[:, None]
-        # Formula 5 from 'Experimental Design for Linear Functionals in RKHS.'
-        return (vectors @ X.T @ np.linalg.inv(
-            self.lambd * self.sigma ** 2 * np.identity(X.shape[0]) + X @ X.T) @ y).flatten()
+from utils import Estimator, SimpleDesignSimulator, Simulator, DesignConfidenceBound, ConfidenceBound
 
 
 class Gradient:
@@ -125,6 +103,7 @@ class GradientFull(Gradient):
         ucbs = est + cbs
         denominators[ucbs < 0] = ucbs[ucbs < 0] ** 2
         denominators[lcbs > 0] = lcbs[lcbs > 0] ** 2
+        self.denominator = denominators
 
         if self.variant == 0:
             star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs))
@@ -174,6 +153,7 @@ def optimize_frank_wolfe(
     # For visualization purpose
     distributions = [distribution.copy()]
     restricted_best_action_space = [ge.restricted_best_action_space.copy()]
+    denominators = [np.ones(action_space.shape[0] ** 2) * 0.01]
 
     gradient = np.zeros_like(init_distribution)
 
@@ -199,6 +179,8 @@ def optimize_frank_wolfe(
 
         # Compute gradient for the next step
         gradient = ge.eval(distribution)
+        if hasattr(ge, "denominator"):
+            denominators.append(ge.denominator.copy())
 
         if verbose:
             print(f"Step: {counter}, Action: {action_id}, Response: {response}, Gradient: {gradient}, "
@@ -209,23 +191,24 @@ def optimize_frank_wolfe(
         distributions.append(distribution.copy())
         counter += 1
 
-    return distributions, restricted_best_action_space
+    return distributions, restricted_best_action_space, denominators
 
 
 if __name__ == '__main__':
-    steps = 20
+    steps = 30
+    np.random.seed(0)
 
     theta_star = np.array([1, 1, 1])
     action_space = np.array([
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1 / 2],
+        [0.5, 0, 0],
+        [0, 1., 0],
+        [1 / np.sqrt(3), 1 / np.sqrt(3), 1 / np.sqrt(3)],
     ])
     # action_space /= 100.
     sigma = 1
-    delta = 1
+    delta = 0.1
     # Setting lambda to 1/number of iterations we want to make.
-    lambd = 1 / steps
+    lambd = 1 / 20
 
     bs = SimpleDesignSimulator(
         action_space=action_space,
@@ -245,26 +228,27 @@ if __name__ == '__main__':
         lambd=lambd,
         sigma=sigma
     )
-    # ge = GradientSimple(
-    #     action_space=action_space,
-    #     theta_est=est,
-    #     cb=cb,
-    #     lambd=lambd
-    # )
+    ge = GradientSimple(
+        action_space=action_space,
+        theta_est=est,
+        cb=cb,
+        lambd=lambd
+    )
     # ge = GradientOnlyNominator(
     #     action_space=action_space,
     #     theta_est=est,
     #     cb=cb,
     #     lambd=lambd
     # )
-    ge = GradientFull(
-        action_space=action_space,
-        theta_est=est,
-        cb=cb,
-        variant=1
-    )
-    distributions, restricted_action_spaces = optimize_frank_wolfe(
-        init_distribution=np.ones(3) / 3,
+    # ge = GradientFull(
+    #     action_space=action_space,
+    #     theta_est=est,
+    #     cb=cb,
+    #     variant=1
+    # )
+    distributions, restricted_action_spaces, all_denominators = optimize_frank_wolfe(
+        # init_distribution=np.ones(3) / 3,
+        init_distribution=np.array([0.5, 0.5, 0]),
         num_components=steps,
         simulator=bs,
         cb=cb,
@@ -281,35 +265,84 @@ if __name__ == '__main__':
         return np.max(np.apply_along_axis(lambda x: x @ V_eta_inv @ x[:, None], 1, restricted_action_space))
 
 
-    def F_only_nominator(distribution, action_space, theta_star, lamd):
+    def F_only_nominator(distribution, restricted_action_space, theta_star, lambd):
         x_star = action_space[np.argmax(action_space @ theta_star)]
         V_eta = action_space.T @ np.diag(distribution) @ action_space
         V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
-        return np.max(np.apply_along_axis(lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None], 1, action_space))
+        return np.max(
+            np.apply_along_axis(lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None], 1, restricted_action_space))
 
 
-    def F_full(distribution, action_space, theta_star, lambd):
+    def F_only_nominator_approx(distribution, restricted_action_space, lambd):
+        V_eta = action_space.T @ np.diag(
+            distribution) @ action_space
+        V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
+
+        n, m = restricted_action_space.shape
+
+        # Reshape the arrays to have compatible shapes for broadcasting
+        # and compute differences between all possible row pairs. Choosing
+        # a max over this set upperbounds max_z ||z - z^*||_V_eta_inv
+        arr1_reshaped = restricted_action_space.reshape(n, 1, m)
+        arr2_reshaped = restricted_action_space.reshape(1, n, m)
+        diffs = arr1_reshaped - arr2_reshaped
+        diffs = diffs.reshape((-1, diffs.shape[-1]))
+        star_id = np.argmax(np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs))
+        diff_star = diffs[star_id]
+        return np.max(
+            np.apply_along_axis(lambda x: diff_star @ V_eta_inv @ diff_star[:, None], 1, restricted_action_space))
+
+
+    def F_full(distribution, restricted_action_space, theta_star, lambd):
         eps = 1e-08
         x_star = action_space[np.argmax(action_space @ theta_star)]
-        remaining_action_space = action_space[np.any(action_space != x_star, axis=1)]
+        remaining_action_space = restricted_action_space[np.any(restricted_action_space != x_star, axis=1)]
         V_eta = action_space.T @ np.diag(distribution) @ action_space
         V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
 
         return np.max(np.apply_along_axis(
             lambda x: (x - x_star) @ V_eta_inv @ (x - x_star)[:, None] / ((x - x_star + eps) @ theta_star) ** 2,
             1,
-            remaining_action_space))
+            restricted_action_space))
 
 
-    # generate_simplex_gif(
-    #     distributions,
-    #     path='./gif/non_linear_design.gif',
-    #     F=lambda d: F_simple(d, action_space, lambd))
-    # generate_simplex_gif(
-    #     distributions,
-    #     path='./gif/non_linear_design.gif',
-    #     F=lambda d: F_only_nominator(d, action_space, theta_star, lambd))
+    def F_full_approx(distribution, restricted_action_space, denominators, lambd):
+        V_eta = action_space.T @ np.diag(
+            distribution) @ action_space
+        V_eta_inv = np.linalg.inv(V_eta + lambd * np.identity(V_eta.shape[0]))
+
+        n, m = restricted_action_space.shape
+
+        # Reshape the arrays to have compatible shapes for broadcasting
+        # and compute differences between all possible row pairs. Choosing
+        # a max over this set upperbounds max_z ||z - z^*||_V_eta_inv
+        arr1_reshaped = restricted_action_space.reshape(n, 1, m)
+        arr2_reshaped = restricted_action_space.reshape(1, n, m)
+        diffs = arr1_reshaped - arr2_reshaped
+        diffs = diffs.reshape((-1, diffs.shape[-1]))
+        nominators = np.apply_along_axis(lambda x: x @ V_eta_inv @ x.T, 1, diffs)
+        return np.max(nominators / denominators) / 20.
+
+
     generate_simplex_gif(
         distributions,
         path='./gif/non_linear_design.gif',
-        F=lambda d: F_full(d, action_space, theta_star, lambd))
+        F1=lambda d: F_simple(d, action_space, lambd),
+        F2=[lambda d, ras=restricted_action_space: F_simple(d, ras, lambd) for restricted_action_space in
+            restricted_action_spaces])
+    # generate_simplex_gif(
+    #     distributions,
+    #     path='./gif/non_linear_design_nominator.gif',
+    #     F2=[lambda d, ras=restricted_action_space: F_only_nominator_approx(d, ras, lambd) for restricted_action_space in
+    #         restricted_action_spaces],
+    #     F1=[lambda d, ras=restricted_action_space: F_only_nominator(d, ras, theta_star, lambd) for
+    #         restricted_action_space in
+    #         restricted_action_spaces])
+    # generate_simplex_gif(
+    #     distributions,
+    #     path='./gif/non_linear_design_full.gif',
+    #     F1=[lambda d, ras=restricted_action_space: F_full(d, ras, theta_star, lambd) for restricted_action_space in
+    #         restricted_action_spaces],
+    #     F2=[lambda d, ras=restricted_action_space, den=denominators: F_full_approx(d, ras, den, lambd) for
+    #         (restricted_action_space, denominators) in
+    #         zip(restricted_action_spaces, all_denominators)])

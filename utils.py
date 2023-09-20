@@ -3,6 +3,28 @@ from typing import Optional
 import numpy as np
 
 
+class Estimator:
+    """ Estimator of action_space @ theta_est values."""
+
+    def __init__(self, action_space: np.array, sigma: float, lambd: float):
+        self.action_space = action_space
+        self.sigma = sigma
+        self.lambd = lambd
+        self.actions_played = []
+        self.responses = []
+
+    def update(self, action: np.array, response: float):
+        self.actions_played.append(action)
+        self.responses.append(response)
+
+    def eval(self, vectors: np.array):
+        X = self.action_space[self.actions_played]
+        y = np.array(self.responses)[:, None]
+        # Formula 5 from 'Experimental Design for Linear Functionals in RKHS.'
+        return (vectors @ X.T @ np.linalg.inv(
+            self.lambd * self.sigma ** 2 * np.identity(X.shape[0]) + X @ X.T) @ y).flatten()
+
+
 class Simulator:
     def __init__(self, action_space: np.array):
         self.action_space = action_space
@@ -37,8 +59,6 @@ class ConfidenceBound:
         return 0
 
 
-
-
 class DesignConfidenceBound(ConfidenceBound):
     """Confidence bound from 'Experimental Design for Linear Functionals in RKHS.'"""
 
@@ -57,7 +77,7 @@ class DesignConfidenceBound(ConfidenceBound):
         self.z_t_prod += action.T @ action
 
     def eval(self, vectors: np.array):
-        omega = self.z_t_prod / self.sigma ** 2 + self.lambd * np.identity(self.z_t_prod.shape[0])
+        omega = self.z_t_prod / (self.sigma ** 2) + self.lambd * np.identity(self.z_t_prod.shape[0])
         omega_inv = np.linalg.inv(omega)
         log = 2 * np.log(np.sqrt(np.linalg.det(omega)) / (self.delta * self.lambd ** (self.d / 2)))
         if log < 0:
@@ -65,6 +85,3 @@ class DesignConfidenceBound(ConfidenceBound):
         z_norms = np.apply_along_axis(lambda x: x @ omega_inv @ x.T, 1, vectors)
         bounds = z_norms * (np.sqrt(log) + 1)
         return bounds
-
-#TODO: Confidence sets at the beginning should be around infinity
-#TODO: There is possibly still a bug with convergence

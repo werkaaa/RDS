@@ -5,7 +5,7 @@ import random
 import numpy as np
 
 from visualize import generate_simplex_gif
-from utils import SimpleDesignSimulator, Simulator, DesignConfidenceBound, ConfidenceBound
+from utils import Estimator, SimpleDesignSimulator, Simulator, DesignConfidenceBound, ConfidenceBound
 
 
 class BanditsSimulator(Simulator):
@@ -64,11 +64,15 @@ def optimize_frank_wolfe(
     distributions = [distribution.copy()]
     ucbs = [None]
     gradient = np.zeros_like(init_distribution)
+    theta_est = Estimator(
+        action_space=action_space,
+        sigma=sigma,
+        lambd=lambd
+    )
 
     while counter < num_components + warm_up_steps:
 
         if counter < warm_up_steps:
-            print("warmup")
             ucb = -1  # For verbose to work
             ucbs.append(None)
             action_id = random.randint(0, action_space.shape[0] - 1)
@@ -78,17 +82,17 @@ def optimize_frank_wolfe(
             ucbs.append(ucb)
 
             # Interact with the environment
-            action_id = np.argmax(ucb)
+            action_id = np.random.choice(np.flatnonzero(ucb == ucb.max()))
 
         response = simulator.eval(action_id)
+        theta_est.update(action_id, response)
         cb.update_state(action_id)
 
         # Update
         action_vector = np.zeros_like(init_distribution)
         action_vector[action_id] = 1
         distribution += (action_vector - distribution) / (counter + 1)
-        # Update only the gradient corresponding to the action taken
-        gradient[action_id] += (response - gradient[action_id]) / (counter + 1)
+        gradient = theta_est.eval(action_space)
 
         if verbose:
             print(f"Step: {counter}, Action: {action_id}, Response: {response}, Gradient: {gradient}, "
@@ -101,10 +105,11 @@ def optimize_frank_wolfe(
 
 
 if __name__ == '__main__':
-    steps = 50
+    np.random.seed(1)
+    steps = 100
 
     # Bandits example
-    mus = [1, 5, 3]
+    mus = [4.5, 5, 4]
     sigma = 1
     deltas = np.ones(steps)
     action_space = np.array([0, 1, 2])
@@ -127,7 +132,7 @@ if __name__ == '__main__':
         verbose=True
     )
     # visualize_frank_wolfe(distributions, action_space)
-    #generate_simplex_gif(distributions, path='./gif/bandits.gif')
+    # generate_simplex_gif(distributions, path='./gif/bandits.gif')
 
     # Simple design example
     theta_star = np.array([1, 1])
@@ -137,8 +142,8 @@ if __name__ == '__main__':
         [np.sqrt(0.5), np.sqrt(0.5)],
     ])
     sigma = 1
-    delta = 1
-    lambd = 1/50
+    delta = 0.1
+    lambd = 1 / 50
 
     bs = SimpleDesignSimulator(
         action_space=action_space,
@@ -165,10 +170,12 @@ if __name__ == '__main__':
         function_values = action_space @ theta_star
         return distribution @ function_values - function_values.max()
 
+
     def F_ucb(distribution, ucb):
         if ucb is None:
             return 0
         return distribution @ ucb - ucb.max()
 
 
-    generate_simplex_gif(distributions, path='./gif/simple_design.gif', F1=F, F2=[lambda d, ucb=ucb: F_ucb(d, ucb) for ucb in ucbs])
+    generate_simplex_gif(distributions, path='./gif/simple_design.gif', F1=F,
+                         F2=[lambda d, ucb=ucb: F_ucb(d, ucb) for ucb in ucbs])
